@@ -1,0 +1,81 @@
+﻿@page "/OrderBooks"
+@using System.Collections.Concurrent
+@using System.Timers
+@using Binance.Net.Interfaces
+@using Bitfinex.Net.Interfaces
+@using Bittrex.Net.Interfaces
+@using Bybit.Net.Interfaces
+@using CoinEx.Net.Interfaces
+@using CryptoExchange.Net.Interfaces
+@using Huobi.Net.Interfaces
+@using Kraken.Net.Interfaces
+@using Kucoin.Net.Clients
+@using Kucoin.Net.Interfaces
+@inject IBinanceOrderBookFactory binanceFactory
+@inject IBitfinexOrderBookFactory bitfinexFactory
+@inject IBittrexOrderBookFactory bittrexFactory
+@inject IBybitOrderBookFactory bybitFactory
+@inject ICoinExOrderBookFactory coinExFactory
+@inject IHuobiOrderBookFactory huobiFactory
+@inject IKrakenOrderBookFactory krakenFactory
+@inject IKucoinOrderBookFactory kucoinFactory
+@implements IDisposable
+
+<h3>ETH-BTC books, live updates:</h3>
+<div style="display:flex; flex-wrap: wrap;">
+    @foreach(var book in _books.OrderBy(p => p.Key))
+    {
+        <div style="margin-bottom: 20px; flex: 1; min-width: 300px;">
+            <h4>@book.Key</h4>
+            @if (book.Value.AskCount >= 3 && book.Value.BidCount >= 3)
+            {
+                for (var i = 0; i < 3; i++)
+                {
+                    <div>@book.Value.Bids.ElementAt(i).Price - @book.Value.Asks.ElementAt(i).Price</div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code{
+    private Dictionary<string, ISymbolOrderBook> _books = new Dictionary<string, ISymbolOrderBook>();
+    private Timer _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Since the Kucoin order book stream needs authentication we will need to provide API credentials beforehand
+        KucoinRestClient.SetDefaultOptions(options =>
+        {
+            options.ApiCredentials = new Kucoin.Net.Objects.KucoinApiCredentials("KEY", "SECRET", "PASSPHRASE");
+        });
+
+        _books = new Dictionary<string, ISymbolOrderBook>
+            {
+                { "Binance", binanceFactory.CreateSpot("ETHBTC") },
+                { "Bitfinex", bitfinexFactory.Create("tETHBTC") },
+                { "Bittrex", bittrexFactory.Create("ETH-BTC") },
+                { "Bybit", bybitFactory.Create("ETHBTC", Bybit.Net.Enums.Category.Spot) },
+                { "CoinEx", coinExFactory.CreateSpot("ETHBTC") },
+                { "Huobi", huobiFactory.CreateSpot("ethbtc") },
+                { "Kraken", krakenFactory.CreateSpot("ETH/XBT") },
+                { "Kucoin", kucoinFactory.CreateSpot("ETH-BTC") },
+            };
+
+        await Task.WhenAll(_books.Select(b => b.Value.StartAsync()));
+
+        // Use a manual update timer so the page isn't refreshed too often
+        _timer = new Timer(500);
+        _timer.Start();
+        _timer.Elapsed += (o, e) => InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        _timer.Stop();
+        _timer.Dispose();
+        foreach (var book in _books.Where(b => b.Value.Status != CryptoExchange.Net.Objects.OrderBookStatus.Disconnected))
+            // It's not necessary to wait for this
+            _ = book.Value.StopAsync();
+    }
+}
